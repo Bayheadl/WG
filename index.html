@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Who guess</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="wrap">
+
+    <!-- Header -->
+    <header class="appHeader">
+      <h1 class="title" dir="ltr">Who guess</h1>
+
+      <!-- يظهر بعد دخول الروم -->
+      <div class="topBar hidden" id="topBar">
+        <div class="topLeft">
+          <div class="chip">
+            <span class="chipLabel">الدور الآن</span>
+            <span class="chipValue" id="turnNow">—</span>
+          </div>
+
+          <div class="chip">
+            <span class="chipLabel">جاهزين</span>
+            <span class="chipValue" id="readyCountTop">0/0</span>
+          </div>
+
+          <div class="chip">
+            <span class="chipLabel">الوقت</span>
+            <span class="chipValue" id="timerTop">—</span>
+          </div>
+        </div>
+
+        <div class="topRight">
+          <div class="chip">
+            <span class="chipLabel">Code</span>
+            <span class="chipValue mono" id="roomCode">—</span>
+            <button class="btn btnGhost btnSm" id="copyCodeBtn">نسخ</button>
+          </div>
+
+          <div class="chip">
+            <span class="chipLabel">Players</span>
+            <span class="chipValue" id="playerCount">0</span>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Lobby Card -->
+    <section class="card" id="lobbyCard">
+
+      <!-- Step 1 -->
+      <div id="lobbyHome">
+        <div class="center">
+          <div class="hTitle">ابدأ</div>
+          <div class="hSub">أنشئ روم أو انضم بكود</div>
+
+          <div class="twoBtns">
+            <button id="goCreateBtn" class="btn btnPrimary btnBig">إنشاء روم</button>
+            <button id="goJoinBtn" class="btn btnBig">انضمام لروم</button>
+          </div>
+
+          <div class="notice" id="lobbyMsg"></div>
+        </div>
+      </div>
+
+      <!-- Step 2A: Create -->
+      <div id="createForm" class="hidden">
+        <div class="formHead">
+          <div class="hTitle">إنشاء روم</div>
+        </div>
+
+        <div class="grid2">
+          <div class="field">
+            <label for="nameCreate">اسمك</label>
+            <input id="nameCreate" placeholder="اكتب اسمك" maxlength="18" />
+          </div>
+
+          <div class="field">
+            <label for="roundsCreate">عدد الجولات</label>
+            <input id="roundsCreate" type="number" min="1" max="20" value="1" />
+          </div>
+
+          <div class="field">
+            <label for="askTimeCreate">وقت كتابة السؤال (ثانية)</label>
+            <input id="askTimeCreate" type="number" min="10" max="120" value="30" />
+          </div>
+
+          <div class="field">
+            <label for="voteTimeCreate">وقت الإجابات (ثانية)</label>
+            <input id="voteTimeCreate" type="number" min="10" max="120" value="20" />
+          </div>
+        </div>
+
+        <div class="actions">
+          <button id="createBtn" class="btn btnPrimary">إنشاء</button>
+          <button id="backHome1" class="btn btnGhost">رجوع</button>
+        </div>
+
+        <div class="notice" id="createMsg"></div>
+      </div>
+
+      <!-- Step 2B: Join -->
+      <div id="joinForm" class="hidden">
+        <div class="formHead">
+          <div class="hTitle">انضمام لروم</div>
+        </div>
+
+        <div class="grid2">
+          <div class="field">
+            <label for="nameJoin">اسمك</label>
+            <input id="nameJoin" placeholder="اكتب اسمك" maxlength="18" />
+          </div>
+
+          <div class="field">
+            <label for="codeJoin">كود الروم</label>
+            <input id="codeJoin" placeholder="مثال: GP4T8J" maxlength="8" />
+          </div>
+        </div>
+
+        <div class="actions">
+          <button id="joinBtn" class="btn btnPrimary">انضمام</button>
+          <button id="backHome2" class="btn btnGhost">رجوع</button>
+        </div>
+
+        <div class="notice" id="joinMsg"></div>
+      </div>
+
+    </section>
+
+    <!-- Room -->
+    <section class="card hidden" id="roomCard">
+
+      <!-- Top row: Me + Mini leaderboard -->
+      <div class="roomTopGrid">
+        <section class="panel">
+          <div class="meInfo">
+            <div class="meRow"><span class="k">أنت</span><span class="v" id="meName">—</span></div>
+            <div class="meRow"><span class="k">نقاطك</span><span class="v" id="meScore">0</span></div>
+            <div class="meRow"><span class="k">حالتك</span><span class="pill pillWait" id="meReadyPill">Waiting</span></div>
+          </div>
+
+          <div class="meActions">
+            <button id="readyBtn" class="btn btnPrimary">I'm Ready</button>
+            <button id="leaveBtn" class="btn btnDanger">خروج</button>
+          </div>
+        </section>
+
+        <section class="panel miniBoard">
+          <div class="miniHead">
+            <div class="miniTitle">الترتيب</div>
+            <div class="miniSub">أفضل النقاط الآن</div>
+          </div>
+          <div id="miniLeaderboard" class="miniList"></div>
+        </section>
+      </div>
+
+      <!-- Players Accordion -->
+      <details class="accordion" open>
+        <summary>
+          <span>اللاعبين</span>
+          <span class="muted" id="playersSummary">0 لاعب</span>
+        </summary>
+        <div class="players" id="players"></div>
+      </details>
+
+      <!-- Start (Owner) -->
+      <section class="section hidden" id="startBox">
+        <div class="sectionHead">
+          <h2>قبل البدء</h2>
+          <div class="sectionSub" id="readyCountText">جاهزين 0/0</div>
+        </div>
+
+        <div class="kpis">
+          <div class="kpi"><div class="kpiLabel">الجولات</div><div class="kpiValue" id="kpiRounds">—</div></div>
+          <div class="kpi"><div class="kpiLabel">اللاعبين</div><div class="kpiValue" id="kpiPlayers">—</div></div>
+          <div class="kpi"><div class="kpiLabel">إجمالي الأدوار</div><div class="kpiValue" id="kpiTurns">—</div></div>
+          <div class="kpi"><div class="kpiLabel">وقت السؤال</div><div class="kpiValue" id="kpiAskTime">—</div></div>
+          <div class="kpi"><div class="kpiLabel">وقت الإجابات</div><div class="kpiValue" id="kpiVoteTime">—</div></div>
+        </div>
+
+        <div class="actions">
+          <button id="startBtn" class="btn btnPrimary" disabled>بدء اللعبة</button>
+        </div>
+
+        <div class="notice" id="startMsg"></div>
+      </section>
+
+      <!-- Asking -->
+      <section class="section hidden" id="askBox">
+        <div class="sectionHead">
+          <h2>دورك تكتب سؤال</h2>
+          <div class="sectionSub">اختر إجابة صحيحة واحدة فقط</div>
+        </div>
+
+        <div class="field">
+          <label for="qText">السؤال</label>
+          <input id="qText" placeholder="اكتب السؤال..." />
+        </div>
+
+        <div class="options">
+          <div class="opt">
+            <input id="opt0" placeholder="الخيار 1" />
+            <label class="pick"><input type="radio" name="correct" value="0" checked /> صحيح</label>
+          </div>
+          <div class="opt">
+            <input id="opt1" placeholder="الخيار 2" />
+            <label class="pick"><input type="radio" name="correct" value="1" /> صحيح</label>
+          </div>
+          <div class="opt">
+            <input id="opt2" placeholder="الخيار 3" />
+            <label class="pick"><input type="radio" name="correct" value="2" /> صحيح</label>
+          </div>
+          <div class="opt">
+            <input id="opt3" placeholder="الخيار 4" />
+            <label class="pick"><input type="radio" name="correct" value="3" /> صحيح</label>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button id="publishBtn" class="btn btnPrimary">نشر السؤال</button>
+          <button id="skipBtn" class="btn btnGhost">تخطي الدور</button>
+        </div>
+
+        <div class="notice" id="askMsg"></div>
+      </section>
+
+      <!-- Voting -->
+      <section class="section hidden" id="voteBox">
+        <div class="sectionHead">
+          <h2 id="qTitle">—</h2>
+          <div class="sectionSub" id="voteSub">اختر إجابتك</div>
+        </div>
+
+        <div class="choices" id="choices"></div>
+        <div class="notice" id="voteMsg"></div>
+      </section>
+
+      <!-- Finished -->
+      <section class="section hidden" id="finishBox">
+        <div class="sectionHead">
+          <h2>انتهت اللعبة</h2>
+          <div class="sectionSub">المراكز الثلاثة الأولى</div>
+        </div>
+
+        <div class="podium" id="podium"></div>
+
+        <details class="accordion">
+          <summary>
+            <span>النتائج كاملة</span>
+          </summary>
+          <div id="leader" class="leader"></div>
+        </details>
+
+        <div class="actions">
+          <button id="restartBtn" class="btn btnPrimary hidden">لعب مرة ثانية</button>
+          <button id="backToLobbyBtn" class="btn btnGhost">العودة للبداية</button>
+        </div>
+      </section>
+
+    </section>
+
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

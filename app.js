@@ -103,6 +103,18 @@ let roomCache = null;
 let playersCache = [];
 let tickTimer = null;
 
+// Local UI state (for reveal + sounds)
+let lastBellQid = null;
+let lastEndBeepQid = null;
+let lastTickSecond = null;
+let lastRenderedRevealQid = null;
+
+// Audio
+let audioEnabled = true;
+let audioUnlocked = false;
+let audioCtx = null;
+let soundBtn = null;
+
 function nowMs(){ return Date.now(); }
 function fmtSecLeft(msLeft){
   const s = Math.max(0, Math.ceil(msLeft/1000));
@@ -122,11 +134,13 @@ function stopTick(){
   if (tickTimer) clearInterval(tickTimer);
   tickTimer = null;
   timerTop.textContent = "—";
+  lastTickSecond = null;
+  lastEndBeepQid = null;
 }
 
 function startTick(){
   stopTick();
-  tickTimer = setInterval(() => tick(), 500);
+  tickTimer = setInterval(() => tick(), 250);
 }
 
 function showOnly(target){
@@ -207,7 +221,7 @@ function getMe(){
   return playersCache.find(p=>p.uid===user?.uid) || null;
 }
 
-// ✅ حل مشكلة الأونر: نسمح بالأونر بالـ UID أو بالاسم
+// ✅ owner by uid or by name
 function isOwner(room){
   const me = getMe();
   const myName = (me?.name || "").trim();
@@ -216,17 +230,11 @@ function isOwner(room){
 }
 
 /**
- * ✅ FIX: تحديث زر "بدء اللعبة" بمجرد تغيّر Ready عند اللاعبين
- * لأن Snapshot الروم ما يتغير لما اللاعبين يضغطون Ready،
- * فكان startBtn يظل disabled.
+ * ✅ FIX: update Start button when players ready changes
  */
 function refreshStartBoxUI(){
   if (!roomCache) return;
-
-  // فقط أثناء الانتظار
   if (roomCache.status !== "WAITING") return;
-
-  // يظهر للأونر فقط
   if (!isOwner(roomCache)) return;
 
   startBox.classList.remove("hidden");
@@ -235,6 +243,83 @@ function refreshStartBoxUI(){
   startBtn.disabled = !allReady;
   startMsg.textContent = allReady ? "الكل جاهز. تقدر تبدأ." : "انتظر لين الجميع يصير Ready.";
 }
+
+/* ---------- Audio (bell + timer ticks + end beep) ---------- */
+
+function ensureAudio(){
+  if (!audioCtx){
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  return audioCtx;
+}
+
+function unlockAudio(){
+  try{
+    const ctx = ensureAudio();
+    if (ctx.state === "suspended") ctx.resume();
+    audioUnlocked = true;
+  }catch{}
+}
+
+document.addEventListener("pointerdown", ()=>{ unlockAudio(); }, { once:false });
+
+function playTone({freq=880, durationMs=120, type="sine", gain=0.05} = {}){
+  if(!audioEnabled || !audioUnlocked) return;
+  try{
+    const ctx = ensureAudio();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = type;
+    o.frequency.value = freq;
+    g.gain.value = gain;
+    o.connect(g);
+    g.connect(ctx.destination);
+    o.start();
+    o.stop(ctx.currentTime + durationMs/1000);
+  }catch{}
+}
+
+function playBell(){
+  // little bell: 2 quick tones
+  playTone({freq: 988, durationMs: 110, type:"triangle", gain:0.05});
+  setTimeout(()=>playTone({freq: 1319, durationMs: 140, type:"triangle", gain:0.045}), 130);
+}
+
+function playTick(){
+  playTone({freq: 660, durationMs: 55, type:"square", gain:0.03});
+}
+
+function playTimeUp(){
+  playTone({freq: 220, durationMs: 180, type:"sine", gain:0.06});
+  setTimeout(()=>playTone({freq: 165, durationMs: 220, type:"sine", gain:0.055}), 190);
+}
+
+function mountSoundToggle(){
+  // optional: add a small button in topbar if not exists
+  if(!topBar) return;
+  if(soundBtn) return;
+
+  soundBtn = document.createElement("button");
+  soundBtn.className = "btn miniBtn";
+  soundBtn.type = "button";
+  soundBtn.style.marginInlineStart = "8px";
+  soundBtn.textContent = "Sound: On";
+
+  soundBtn.addEventListener("click", ()=>{
+    audioEnabled = !audioEnabled;
+    soundBtn.textContent = audioEnabled ? "Sound: On" : "Sound: Off";
+    unlockAudio();
+  });
+
+  // try to append near copy button / room code
+  try{
+    copyCodeBtn?.parentElement?.appendChild(soundBtn);
+  }catch{
+    topBar.appendChild(soundBtn);
+  }
+}
+
+/* ---------- UI render helpers ---------- */
 
 function renderMiniLeaderboard(players){
   const sorted = [...players].sort((a,b)=>(b.score||0)-(a.score||0));
@@ -258,9 +343,24 @@ function renderPlayers(players, ownerUid, ownerName){
   const sortedJoin = [...players].sort((a,b)=>(a.joinedAtMs||0)-(b.joinedAtMs||0));
   const ownerNameClean = (ownerName || "").trim();
 
+  const voting = (roomCache?.status==="STARTED" && roomCache?.phase==="VOTING" && !!roomCache?.currentQuestion);
+  const q = voting ? roomCache.currentQuestion : null;
+  const answeredSet = new Set((q?.answeredUids)||[]);
+
   sortedJoin.forEach(p=>{
     const row=document.createElement("div");
     row.className="playerRow";
+
+    // voting status colors
+    if(voting && q){
+      const isAsker = p.uid === q.askerUid;
+      const isAnswered = answeredSet.has(p.uid);
+
+      row.classList.remove("stateAsker","stateAnswered","statePending");
+      if(isAsker) row.classList.add("stateAsker");
+      else if(isAnswered) row.classList.add("stateAnswered");
+      else row.classList.add("statePending");
+    }
 
     const left=document.createElement("div");
     left.className="playerMain";
@@ -284,6 +384,20 @@ function renderPlayers(players, ownerUid, ownerName){
       b.className="badge badgeYou";
       b.textContent="You";
       left.appendChild(b);
+    }
+
+    // pending indicator (during voting)
+    if(voting && q){
+      const pill=document.createElement("span");
+      pill.className="badge badgeState";
+      if(p.uid === q.askerUid){
+        pill.textContent = "Asker";
+      }else if(answeredSet.has(p.uid)){
+        pill.textContent = "Voted";
+      }else{
+        pill.textContent = "Pending";
+      }
+      left.appendChild(pill);
     }
 
     const right=document.createElement("div");
@@ -312,6 +426,7 @@ function renderPlayers(players, ownerUid, ownerName){
 function renderFinish(players){
   const sorted=[...players].sort((a,b)=>(b.score||0)-(a.score||0));
 
+  // keep top3 podium as-is
   podium.innerHTML="";
   const top3 = [sorted[0],sorted[1],sorted[2]].filter(Boolean);
   const labels = ["المركز الأول","المركز الثاني","المركز الثالث"];
@@ -333,10 +448,15 @@ function renderFinish(players){
     podium.appendChild(box);
   }
 
+  // full leaderboard (all players) + highlight top 3
   leader.innerHTML="";
   sorted.forEach((p,i)=>{
     const row=document.createElement("div");
     row.className="leaderRow";
+    if(i===0) row.classList.add("leaderTop1");
+    if(i===1) row.classList.add("leaderTop2");
+    if(i===2) row.classList.add("leaderTop3");
+
     const l=document.createElement("div");
     l.className="leaderName";
     l.textContent=`${i+1}. ${p.name||"—"}`;
@@ -351,6 +471,7 @@ function renderFinish(players){
 async function init(){
   user = await ensureAnonAuth();
   showLobby("");
+  mountSoundToggle();
 }
 init();
 
@@ -407,11 +528,11 @@ createBtn.addEventListener("click", async ()=>{
 
   await setDoc(roomRef,{
     ownerUid: user.uid,
-    ownerName: name, // ✅ مهم: نخزن اسم الأونر لحل مشكلة UID
+    ownerName: name,
     createdAt: serverTimestamp(),
 
-    status: "WAITING",
-    phase: "ASKING",
+    status: "WAITING",         // WAITING | STARTED | FINISHED
+    phase: "ASKING",           // ASKING | VOTING
     roundsRequested: rounds,
 
     askTimeSec,
@@ -495,7 +616,6 @@ startBtn.addEventListener("click", async ()=>{
   if(!rs.exists()) return;
   const room=rs.data();
 
-  // ✅ شرط الأونر (UID أو الاسم)
   if(!isOwner(room)){
     startMsg.textContent = "فقط الأونر يقدر يبدأ اللعبة.";
     return;
@@ -516,7 +636,6 @@ startBtn.addEventListener("click", async ()=>{
   const askTimeSec = clamp(Number(room.askTimeSec||30),10,120);
   const phaseEndsAtMs = nowMs() + askTimeSec*1000;
 
-  // ✅ لو الروم قديم وما فيه ownerName، نحاول نحفظه تلقائيًا
   const me = players.find(p=>p.uid===user.uid);
   const patch = {};
   if(!room.ownerName && me?.name) patch.ownerName = me.name;
@@ -576,6 +695,7 @@ async function enterRoom(code){
   currentRoomCode = code;
   showRoom();
   resetBoxes();
+  mountSoundToggle();
 
   roomCodeEl.textContent = code;
 
@@ -604,7 +724,6 @@ async function enterRoom(code){
     readyCountText.textContent = `جاهزين ${ready}/${total}`;
     playerCountEl.textContent = String(total);
 
-    // ✅ FIX: حدث واجهة الأونر (زر البدء) فور تغيّر ready
     refreshStartBoxUI();
   });
 
@@ -632,7 +751,6 @@ async function enterRoom(code){
     renderPlayers(playersCache, room.ownerUid, room.ownerName);
 
     if(room.status === "WAITING"){
-      // ✅ FIX: نعتمد على دالة واحدة موحدة لتحديث زر البدء
       refreshStartBoxUI();
       restartBtn.classList.add("hidden");
       stopTick();
@@ -670,6 +788,15 @@ async function enterRoom(code){
       const q = room.currentQuestion;
       if(!q) return;
 
+      // 🔔 Bell when a new question starts voting (once per client)
+      if(q.qid && q.qid !== lastBellQid && !q.reveal){
+        lastBellQid = q.qid;
+        playBell();
+        lastEndBeepQid = null;
+        lastTickSecond = null;
+        lastRenderedRevealQid = null;
+      }
+
       qTitle.textContent = q.text || "—";
       renderChoices(q, order);
       return;
@@ -706,6 +833,12 @@ publishBtn.addEventListener("click", async ()=>{
 
   const qid = String((room.qCounter||0)+1);
 
+  // reset local sound flags for this question
+  lastBellQid = null;
+  lastEndBeepQid = null;
+  lastTickSecond = null;
+  lastRenderedRevealQid = null;
+
   await updateDoc(roomRef,{
     phase:"VOTING",
     qCounter:(room.qCounter||0)+1,
@@ -715,7 +848,9 @@ publishBtn.addEventListener("click", async ()=>{
       text,
       options,
       correctIndex:cidx,
-      answeredUids:[]
+      answeredUids:[],
+      settled:false,
+      reveal:false
     },
     phaseEndsAtMs: nowMs() + voteTimeSec*1000
   });
@@ -748,40 +883,86 @@ skipBtn.addEventListener("click", async ()=>{
 
 /* Voting UI */
 function renderChoices(q, order){
-  const alreadyAnswered = (q.answeredUids || []).includes(user.uid);
   const isAsker = q.askerUid === user.uid;
+  const alreadyAnswered = (q.answeredUids || []).includes(user.uid);
+  const isReveal = !!q.reveal;
+
+  // counts + pending names
+  const totalVoters = order.filter(uid=>uid!==q.askerUid);
+  const answered = (q.answeredUids || []);
+  const pendingUids = totalVoters.filter(uid=>!answered.includes(uid));
+  const pendingNames = pendingUids.map(uid=>getPlayerName(uid)).filter(Boolean);
+
+  // top status line
+  if(isReveal){
+    voteSub.textContent = "الإجابة الصحيحة";
+    voteMsg.textContent = "الراوند الجاي بعد ثواني...";
+  }else{
+    voteSub.textContent = `Voted ${answered.length}/${totalVoters.length}`;
+    voteMsg.textContent = pendingNames.length ? `Waiting: ${pendingNames.join(", ")}` : "Everyone voted!";
+  }
 
   choices.innerHTML = "";
-  voteMsg.textContent = "";
+
+  // get my chosen (for reveal)
+  const me = getMe();
+  const myChosenIdx = (me?.lastAnswerQid === q.qid) ? me?.lastAnswerIdx : null;
 
   q.options.forEach((opt,idx)=>{
     const b=document.createElement("button");
     b.className="btn choiceBtn";
     b.textContent=opt;
 
-    b.disabled = alreadyAnswered || isAsker;
+    if(isReveal){
+      b.disabled = true;
 
-    b.addEventListener("click", async ()=>{
-      await submitAnswer(idx);
-    });
+      // correct is green
+      if(idx === q.correctIndex) b.classList.add("choiceCorrect");
+
+      // my wrong choice (optional red)
+      if(myChosenIdx !== null && idx === myChosenIdx && myChosenIdx !== q.correctIndex){
+        b.classList.add("choiceWrong");
+      }
+
+      // dim others
+      if(idx !== q.correctIndex && idx !== myChosenIdx){
+        b.classList.add("choiceDim");
+      }
+    }else{
+      // lock voting if already answered or asker
+      b.disabled = alreadyAnswered || isAsker;
+
+      // show selected
+      if(myChosenIdx !== null && idx === myChosenIdx){
+        b.classList.add("choiceSelected");
+      }
+
+      b.addEventListener("click", async ()=>{
+        await submitAnswer(idx);
+      });
+    }
 
     choices.appendChild(b);
   });
 
-  if(isAsker){
-    voteSub.textContent="انتظر إجابات الباقين";
-  } else if(alreadyAnswered){
-    voteSub.textContent="تم تسجيل إجابتك";
-    voteMsg.textContent="انتظر باقي اللاعبين...";
-  } else {
-    voteSub.textContent="اختر إجابتك";
+  // helper text
+  if(isAsker && !isReveal){
+    // asker can't vote
+    voteMsg.textContent = pendingNames.length ? `Waiting: ${pendingNames.join(", ")}` : "Everyone voted!";
+  } else if(alreadyAnswered && !isReveal){
+    // already voted
+    // keep voteMsg as waiting list
   }
 
-  const need = order.filter(uid=>uid!==q.askerUid);
-  const answered = q.answeredUids || [];
-  const allAnswered = need.every(uid=>answered.includes(uid));
-  if(allAnswered && user.uid===q.askerUid){
-    settleAndAdvance(order, true);
+  // if all voted -> asker settles + reveals
+  const allAnswered = pendingUids.length === 0;
+  if(allAnswered && user.uid===q.askerUid && !isReveal){
+    settleAndReveal(order, true);
+  }
+
+  // refresh players coloring
+  if(roomCache){
+    renderPlayers(playersCache, roomCache.ownerUid, roomCache.ownerName);
   }
 }
 
@@ -796,17 +977,23 @@ async function submitAnswer(chosenIdx){
 
   if(q.askerUid===user.uid) return;
   if((q.answeredUids||[]).includes(user.uid)) return;
+  if(q.reveal) return;
 
   const playerRef=doc(db,"rooms",currentRoomCode,"players",user.uid);
   await updateDoc(playerRef,{ lastAnswerQid:q.qid, lastAnswerIdx:chosenIdx });
   await updateDoc(roomRef,{ "currentQuestion.answeredUids": arrayUnion(user.uid) });
 
+  // instant ui
   voteSub.textContent="تم تسجيل إجابتك";
-  voteMsg.textContent="انتظر باقي اللاعبين...";
 }
 
-/* Settle + advance */
-async function settleAndAdvance(order, allowPartial=false){
+/**
+ * ✅ Settle + Reveal (3 sec) + NEW scoring system (A)
+ * - correct voters +1
+ * - wrong/no answer 0
+ * - asker + wrongCount
+ */
+async function settleAndReveal(order, allowPartial=false){
   const roomRef=doc(db,"rooms",currentRoomCode);
   const rs=await getDoc(roomRef);
   if(!rs.exists()) return;
@@ -815,40 +1002,48 @@ async function settleAndAdvance(order, allowPartial=false){
   if(room.phase!=="VOTING" || !room.currentQuestion) return;
   const q=room.currentQuestion;
 
+  // only asker settles
   if(q.askerUid !== user.uid) return;
+
+  // don't settle twice
+  if(q.settled) return;
 
   const playersSnap=await getDocs(query(collection(db,"rooms",currentRoomCode,"players"),orderBy("joinedAtMs","asc")));
   const plist=playersSnap.docs.map(d=>({uid:d.id, ...d.data()}));
 
+  const byUid = new Map(plist.map(p=>[p.uid,p]));
+  const participants = order.map(uid=>byUid.get(uid)).filter(Boolean);
+
+  let wrongCount = 0;
+
   const batch=writeBatch(db);
-  const participants = order.map(uid=> plist.find(p=>p.uid===uid)).filter(Boolean);
 
-  let wrongCount=0;
-  let allCorrect=true;
-
+  // score voters
   participants.forEach(p=>{
-    if(p.uid===q.askerUid) return;
+    if(p.uid === q.askerUid) return;
 
     const answered = (p.lastAnswerQid === q.qid);
     const correct = answered && (p.lastAnswerIdx === q.correctIndex);
 
-    if(!correct){
-      allCorrect=false;
+    if(correct){
+      batch.update(doc(db,"rooms",currentRoomCode,"players",p.uid),{ score:(p.score||0)+1 });
+    }else{
+      // wrong or no answer => 0
       wrongCount += 1;
     }
   });
 
-  if(allCorrect){
-    participants.forEach(p=>{
-      if(p.uid===q.askerUid) return;
-      batch.update(doc(db,"rooms",currentRoomCode,"players",p.uid),{ score:(p.score||0)+1 });
-    });
-  }else{
-    const asker = plist.find(p=>p.uid===q.askerUid);
-    batch.update(doc(db,"rooms",currentRoomCode,"players",q.askerUid),{ score:(asker?.score||0)+wrongCount });
-  }
+  // score asker: + number wrong
+  const asker = byUid.get(q.askerUid);
+  batch.update(doc(db,"rooms",currentRoomCode,"players",q.askerUid),{ score:(asker?.score||0)+wrongCount });
 
-  batch.update(roomRef, nextState(room));
+  // switch to reveal mode for 3 seconds
+  batch.update(roomRef,{
+    "currentQuestion.settled": true,
+    "currentQuestion.reveal": true,
+    phaseEndsAtMs: nowMs() + 3000
+  });
+
   await batch.commit();
 }
 
@@ -887,6 +1082,27 @@ async function tick(){
   const left = endsAt - nowMs();
   timerTop.textContent = fmtSecLeft(left);
 
+  const secLeft = Math.max(0, Math.ceil(left/1000));
+
+  // timer sound (last 5 seconds) only in VOTING and not reveal
+  if(room.phase==="VOTING" && room.currentQuestion && !room.currentQuestion.reveal){
+    if(secLeft <= 5 && secLeft >= 1){
+      if(lastTickSecond !== secLeft){
+        lastTickSecond = secLeft;
+        playTick();
+      }
+    }
+  }
+
+  // time up sound once
+  if(left <= 0 && room.phase==="VOTING" && room.currentQuestion){
+    const qid = room.currentQuestion.qid || "x";
+    if(lastEndBeepQid !== qid && !room.currentQuestion.reveal){
+      lastEndBeepQid = qid;
+      playTimeUp();
+    }
+  }
+
   if(left > 0) return;
 
   const roomRef=doc(db,"rooms",currentRoomCode);
@@ -900,6 +1116,7 @@ async function tick(){
   const askerUid = order.length ? order[turnNum % order.length] : null;
   if(!askerUid) return;
 
+  // ASKING timeout: auto-skip by asker
   if(room.phase==="ASKING"){
     if(askerUid === user.uid){
       await updateDoc(roomRef, nextState(room));
@@ -907,11 +1124,22 @@ async function tick(){
     return;
   }
 
+  // VOTING timeout:
   if(room.phase==="VOTING"){
     const q = room.currentQuestion;
     if(!q) return;
+
+    // if reveal finished -> advance
+    if(q.reveal){
+      if(q.askerUid === user.uid){
+        await updateDoc(roomRef, nextState(room));
+      }
+      return;
+    }
+
+    // if voting finished by timeout -> settle + reveal
     if(q.askerUid === user.uid){
-      await settleAndAdvance(order, true);
+      await settleAndReveal(order, true);
     }
     return;
   }

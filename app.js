@@ -195,13 +195,24 @@ function isAllReady(list){
 
 function computeOrderFromRoom(room, players){
   if (Array.isArray(room.playerOrder) && room.playerOrder.length) return room.playerOrder;
-  // fallback by join order
   return [...players].sort((a,b)=> (a.joinedAtMs||0)-(b.joinedAtMs||0)).map(p=>p.uid);
 }
 
 function getPlayerName(uid){
   const p = playersCache.find(x=>x.uid===uid);
   return p?.name || "—";
+}
+
+function getMe(){
+  return playersCache.find(p=>p.uid===user?.uid) || null;
+}
+
+// ✅ حل مشكلة الأونر: نسمح بالأونر بالـ UID أو بالاسم
+function isOwner(room){
+  const me = getMe();
+  const myName = (me?.name || "").trim();
+  const ownerName = (room?.ownerName || "").trim();
+  return (room?.ownerUid === user?.uid) || (ownerName && myName && ownerName === myName);
 }
 
 function renderMiniLeaderboard(players){
@@ -221,9 +232,10 @@ function renderMiniLeaderboard(players){
   });
 }
 
-function renderPlayers(players, ownerUid){
+function renderPlayers(players, ownerUid, ownerName){
   playersEl.innerHTML = "";
   const sortedJoin = [...players].sort((a,b)=>(a.joinedAtMs||0)-(b.joinedAtMs||0));
+  const ownerNameClean = (ownerName || "").trim();
 
   sortedJoin.forEach(p=>{
     const row=document.createElement("div");
@@ -237,7 +249,10 @@ function renderPlayers(players, ownerUid){
     name.textContent=p.name || "—";
     left.appendChild(name);
 
-    if (p.uid===ownerUid){
+    const isOwnerByUid = (p.uid===ownerUid);
+    const isOwnerByName = (!!ownerNameClean && (p.name||"").trim()===ownerNameClean);
+
+    if (isOwnerByUid || isOwnerByName){
       const b=document.createElement("span");
       b.className="badge badgeOwner";
       b.textContent="Owner";
@@ -276,7 +291,6 @@ function renderPlayers(players, ownerUid){
 function renderFinish(players){
   const sorted=[...players].sort((a,b)=>(b.score||0)-(a.score||0));
 
-  // Podium Top 3
   podium.innerHTML="";
   const top3 = [sorted[0],sorted[1],sorted[2]].filter(Boolean);
   const labels = ["المركز الأول","المركز الثاني","المركز الثالث"];
@@ -298,7 +312,6 @@ function renderFinish(players){
     podium.appendChild(box);
   }
 
-  // Full list
   leader.innerHTML="";
   sorted.forEach((p,i)=>{
     const row=document.createElement("div");
@@ -373,10 +386,11 @@ createBtn.addEventListener("click", async ()=>{
 
   await setDoc(roomRef,{
     ownerUid: user.uid,
+    ownerName: name, // ✅ مهم: نخزن اسم الأونر لحل مشكلة UID
     createdAt: serverTimestamp(),
 
-    status: "WAITING",         // WAITING | STARTED | FINISHED
-    phase: "ASKING",           // ASKING | VOTING
+    status: "WAITING",
+    phase: "ASKING",
     roundsRequested: rounds,
 
     askTimeSec,
@@ -452,12 +466,19 @@ readyBtn.addEventListener("click", async ()=>{
 
 /* Start (owner only) */
 startBtn.addEventListener("click", async ()=>{
+  startMsg.textContent = "";
   if(!currentRoomCode) return;
+
   const roomRef=doc(db,"rooms",currentRoomCode);
   const rs=await getDoc(roomRef);
   if(!rs.exists()) return;
   const room=rs.data();
-  if(room.ownerUid!==user.uid) return;
+
+  // ✅ شرط الأونر (UID أو الاسم)
+  if(!isOwner(room)){
+    startMsg.textContent = "فقط الأونر يقدر يبدأ اللعبة.";
+    return;
+  }
 
   const playersSnap=await getDocs(query(collection(db,"rooms",currentRoomCode,"players"),orderBy("joinedAtMs","asc")));
   const players=playersSnap.docs.map(d=>({uid:d.id, ...d.data()}));
@@ -474,7 +495,13 @@ startBtn.addEventListener("click", async ()=>{
   const askTimeSec = clamp(Number(room.askTimeSec||30),10,120);
   const phaseEndsAtMs = nowMs() + askTimeSec*1000;
 
+  // ✅ لو الروم قديم وما فيه ownerName، نحاول نحفظه تلقائيًا
+  const me = players.find(p=>p.uid===user.uid);
+  const patch = {};
+  if(!room.ownerName && me?.name) patch.ownerName = me.name;
+
   await updateDoc(roomRef,{
+    ...patch,
     status:"STARTED",
     phase:"ASKING",
     playerOrder: order,
@@ -496,9 +523,8 @@ restartBtn.addEventListener("click", async ()=>{
   const rs = await getDoc(roomRef);
   if(!rs.exists()) return;
   const room = rs.data();
-  if(room.ownerUid !== user.uid) return;
+  if(!isOwner(room)) return;
 
-  // reset players scores/ready
   const playersSnap=await getDocs(collection(db,"rooms",currentRoomCode,"players"));
   const batch=writeBatch(db);
   playersSnap.forEach(d=>{
@@ -548,7 +574,7 @@ async function enterRoom(code){
     }
 
     if(roomCache){
-      renderPlayers(list, roomCache.ownerUid);
+      renderPlayers(list, roomCache.ownerUid, roomCache.ownerName);
     }
     renderMiniLeaderboard(list);
 
@@ -565,30 +591,25 @@ async function enterRoom(code){
 
     resetBoxes();
 
-    // Update UI basics
     const order = computeOrderFromRoom(room, playersCache);
     const rounds = clamp(Number(room.roundsRequested||1),1,20);
     const totalTurns = Number(room.totalTurns || (order.length*rounds));
     const turnNum = Number(room.turnNum||0);
 
-    // Turn display
     const askerUid = order.length ? order[turnNum % order.length] : null;
     turnNow.textContent = askerUid ? getPlayerName(askerUid) : "—";
 
-    // KPIs
     kpiRounds.textContent = String(rounds);
     kpiPlayers.textContent = String(order.length || playersCache.length || 0);
     kpiTurns.textContent = String(totalTurns || 0);
     kpiAskTime.textContent = `${clamp(Number(room.askTimeSec||30),10,120)}s`;
     kpiVoteTime.textContent = `${clamp(Number(room.voteTimeSec||20),10,120)}s`;
 
-    // Players list (needs owner uid)
-    renderPlayers(playersCache, room.ownerUid);
+    renderPlayers(playersCache, room.ownerUid, room.ownerName);
 
-    // Status routing
     if(room.status === "WAITING"){
-      // owner sees start box
-      if(room.ownerUid === user.uid){
+      // ✅ نعرض صندوق البدء للأونر بالاسم أو UID
+      if(isOwner(room)){
         startBox.classList.remove("hidden");
         const allReady = isAllReady(playersCache);
         startBtn.disabled = !allReady;
@@ -603,8 +624,7 @@ async function enterRoom(code){
       finishBox.classList.remove("hidden");
       renderFinish(playersCache);
 
-      // restart فقط للأونر
-      if(room.ownerUid === user.uid){
+      if(isOwner(room)){
         restartBtn.classList.remove("hidden");
       } else {
         restartBtn.classList.add("hidden");
@@ -617,7 +637,6 @@ async function enterRoom(code){
     // STARTED
     startTick();
 
-    // ASKING
     if(room.phase === "ASKING"){
       if(askerUid === user.uid){
         askBox.classList.remove("hidden");
@@ -626,7 +645,6 @@ async function enterRoom(code){
       return;
     }
 
-    // VOTING
     if(room.phase === "VOTING"){
       voteBox.classList.remove("hidden");
 
@@ -644,7 +662,6 @@ async function enterRoom(code){
 publishBtn.addEventListener("click", async ()=>{
   if(!currentRoomCode) return;
 
-  // تأكيد قبل نشر السؤال
   if(!confirm("متأكد تبغى تنشر السؤال الآن؟")) return;
 
   const text=(qText.value||"").trim();
@@ -661,10 +678,8 @@ publishBtn.addEventListener("click", async ()=>{
   if(!rs.exists()) return;
   const room=rs.data();
 
-  const askTimeSec = clamp(Number(room.askTimeSec||30),10,120);
   const voteTimeSec = clamp(Number(room.voteTimeSec||20),10,120);
 
-  // تحقق إنه فعلًا دورك
   const order = computeOrderFromRoom(room, playersCache);
   const turnNum = Number(room.turnNum||0);
   const askerUid = order.length ? order[turnNum % order.length] : null;
@@ -686,7 +701,6 @@ publishBtn.addEventListener("click", async ()=>{
     phaseEndsAtMs: nowMs() + voteTimeSec*1000
   });
 
-  // reset inputs
   qText.value="";
   opt0.value=""; opt1.value=""; opt2.value=""; opt3.value="";
   const first=document.querySelector('input[name="correct"][value="0"]');
@@ -726,7 +740,6 @@ function renderChoices(q, order){
     b.className="btn choiceBtn";
     b.textContent=opt;
 
-    // قفل التصويت بعد اختيار واحد
     b.disabled = alreadyAnswered || isAsker;
 
     b.addEventListener("click", async ()=>{
@@ -745,7 +758,6 @@ function renderChoices(q, order){
     voteSub.textContent="اختر إجابتك";
   }
 
-  // لو الكل جاوب → الأونر/صاحب السؤال يسوي تسوية
   const need = order.filter(uid=>uid!==q.askerUid);
   const answered = q.answeredUids || [];
   const allAnswered = need.every(uid=>answered.includes(uid));
@@ -770,12 +782,11 @@ async function submitAnswer(chosenIdx){
   await updateDoc(playerRef,{ lastAnswerQid:q.qid, lastAnswerIdx:chosenIdx });
   await updateDoc(roomRef,{ "currentQuestion.answeredUids": arrayUnion(user.uid) });
 
-  // UI مباشرة
   voteSub.textContent="تم تسجيل إجابتك";
   voteMsg.textContent="انتظر باقي اللاعبين...";
 }
 
-/* Settle + advance (called by asker, or by timeout) */
+/* Settle + advance */
 async function settleAndAdvance(order, allowPartial=false){
   const roomRef=doc(db,"rooms",currentRoomCode);
   const rs=await getDoc(roomRef);
@@ -785,15 +796,12 @@ async function settleAndAdvance(order, allowPartial=false){
   if(room.phase!=="VOTING" || !room.currentQuestion) return;
   const q=room.currentQuestion;
 
-  // only asker should settle
   if(q.askerUid !== user.uid) return;
 
   const playersSnap=await getDocs(query(collection(db,"rooms",currentRoomCode,"players"),orderBy("joinedAtMs","asc")));
   const plist=playersSnap.docs.map(d=>({uid:d.id, ...d.data()}));
 
   const batch=writeBatch(db);
-
-  // participants = order (stable)
   const participants = order.map(uid=> plist.find(p=>p.uid===uid)).filter(Boolean);
 
   let wrongCount=0;
@@ -805,7 +813,6 @@ async function settleAndAdvance(order, allowPartial=false){
     const answered = (p.lastAnswerQid === q.qid);
     const correct = answered && (p.lastAnswerIdx === q.correctIndex);
 
-    // إذا allowPartial (بسبب timeout): اللي ما جاوب يعتبر غلط
     if(!correct){
       allCorrect=false;
       wrongCount += 1;
@@ -863,7 +870,6 @@ async function tick(){
 
   if(left > 0) return;
 
-  // Time is up: advance logic
   const roomRef=doc(db,"rooms",currentRoomCode);
   const order = computeOrderFromRoom(room, playersCache);
   const rounds = clamp(Number(room.roundsRequested||1),1,20);
@@ -875,7 +881,6 @@ async function tick(){
   const askerUid = order.length ? order[turnNum % order.length] : null;
   if(!askerUid) return;
 
-  // ASKING timeout: asker auto-skip
   if(room.phase==="ASKING"){
     if(askerUid === user.uid){
       await updateDoc(roomRef, nextState(room));
@@ -883,7 +888,6 @@ async function tick(){
     return;
   }
 
-  // VOTING timeout: asker settle even لو فيه ناس ما جاوبت
   if(room.phase==="VOTING"){
     const q = room.currentQuestion;
     if(!q) return;
@@ -892,4 +896,4 @@ async function tick(){
     }
     return;
   }
-  }
+}

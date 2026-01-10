@@ -9,6 +9,15 @@
   --primary: #6d5efc;
   --danger: #ff5a6a;
   --ok: #2fd27a;
+
+  /* NEW: voting state colors */
+  --asker: #78a0ff;
+  --pending: #ff6b6b;
+
+  /* NEW: podium colors */
+  --gold: rgba(255, 215, 120, 0.20);
+  --silver: rgba(200, 210, 230, 0.18);
+  --bronze: rgba(210, 150, 110, 0.18);
 }
 
 *{box-sizing:border-box}
@@ -135,6 +144,14 @@ input:focus{border-color: rgba(109,94,252,0.6)}
 .btnSm{padding:8px 10px;border-radius:12px;font-weight:800}
 .btnBig{padding:16px;border-radius:16px;font-size:15px}
 
+/* NEW: small button used in topbar (sound toggle) */
+.miniBtn{
+  padding:8px 10px;
+  border-radius:12px;
+  font-weight:900;
+  font-size:12px;
+}
+
 .notice{
   min-height:20px;
   margin-top:12px;
@@ -227,6 +244,23 @@ input:focus{border-color: rgba(109,94,252,0.6)}
 @media (max-width:780px){.choices{grid-template-columns:1fr}}
 .choiceBtn{padding:14px;border-radius:16px}
 
+/* NEW: choice states */
+.choiceBtn.choiceSelected{
+  border-color: rgba(255,255,255,0.24);
+  background: rgba(255,255,255,0.09);
+}
+.choiceBtn.choiceCorrect{
+  border-color: rgba(47,210,122,0.75);
+  background: rgba(47,210,122,0.18);
+}
+.choiceBtn.choiceWrong{
+  border-color: rgba(255,90,106,0.65);
+  background: rgba(255,90,106,0.14);
+}
+.choiceBtn.choiceDim{
+  opacity: .55;
+}
+
 .players{display:flex;flex-direction:column;gap:10px;margin-top:10px}
 .playerRow{
   border:1px solid var(--stroke);
@@ -251,6 +285,28 @@ input:focus{border-color: rgba(109,94,252,0.6)}
 }
 .badgeOwner{border-color: rgba(109,94,252,0.45); background: rgba(109,94,252,0.16)}
 .badgeYou{border-color: rgba(255,255,255,0.18); background: rgba(255,255,255,0.05)}
+
+/* NEW: badge for voting state */
+.badgeState{
+  border-color: rgba(255,255,255,0.14);
+  background: rgba(0,0,0,0.10);
+  color: rgba(255,255,255,0.78);
+}
+
+/* NEW: row states during voting */
+.playerRow.stateAsker{
+  border-color: rgba(120,160,255,0.55);
+  background: rgba(120,160,255,0.10);
+}
+.playerRow.stateAnswered{
+  border-color: rgba(47,210,122,0.55);
+  background: rgba(47,210,122,0.10);
+}
+.playerRow.statePending{
+  border-color: rgba(255,107,107,0.50);
+  background: rgba(255,107,107,0.08);
+}
+
 .playerMeta{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .metaBox{
   padding:8px 10px;
@@ -319,5 +375,29 @@ input:focus{border-color: rgba(109,94,252,0.6)}
   border-radius:14px;
   padding:10px 12px;
 }
+
+/* NEW: highlight top 3 */
+.leaderRow.leaderTop1{
+  border-color: rgba(255,215,120,0.45);
+  background: var(--gold);
+}
+.leaderRow.leaderTop2{
+  border-color: rgba(200,210,230,0.40);
+  background: var(--silver);
+}
+.leaderRow.leaderTop3{
+  border-color: rgba(210,150,110,0.40);
+  background: var(--bronze);
+}
+
 .leaderName{font-weight:900}
 .leaderScore{color:var(--muted);font-weight:800}
+
+/* NEW: footer */
+.footerNote{
+  margin-top: 18px;
+  text-align:center;
+  color: rgba(255,255,255,0.55);
+  font-size: 12px;
+  letter-spacing: 0.2px;
+}

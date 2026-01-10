@@ -215,6 +215,27 @@ function isOwner(room){
   return (room?.ownerUid === user?.uid) || (ownerName && myName && ownerName === myName);
 }
 
+/**
+ * ✅ FIX: تحديث زر "بدء اللعبة" بمجرد تغيّر Ready عند اللاعبين
+ * لأن Snapshot الروم ما يتغير لما اللاعبين يضغطون Ready،
+ * فكان startBtn يظل disabled.
+ */
+function refreshStartBoxUI(){
+  if (!roomCache) return;
+
+  // فقط أثناء الانتظار
+  if (roomCache.status !== "WAITING") return;
+
+  // يظهر للأونر فقط
+  if (!isOwner(roomCache)) return;
+
+  startBox.classList.remove("hidden");
+
+  const allReady = isAllReady(playersCache);
+  startBtn.disabled = !allReady;
+  startMsg.textContent = allReady ? "الكل جاهز. تقدر تبدأ." : "انتظر لين الجميع يصير Ready.";
+}
+
 function renderMiniLeaderboard(players){
   const sorted = [...players].sort((a,b)=>(b.score||0)-(a.score||0));
   miniLeaderboard.innerHTML = "";
@@ -582,6 +603,9 @@ async function enterRoom(code){
     readyCountTop.textContent = `${ready}/${total}`;
     readyCountText.textContent = `جاهزين ${ready}/${total}`;
     playerCountEl.textContent = String(total);
+
+    // ✅ FIX: حدث واجهة الأونر (زر البدء) فور تغيّر ready
+    refreshStartBoxUI();
   });
 
   unsubRoom = onSnapshot(roomRef, async (snap)=>{
@@ -608,13 +632,8 @@ async function enterRoom(code){
     renderPlayers(playersCache, room.ownerUid, room.ownerName);
 
     if(room.status === "WAITING"){
-      // ✅ نعرض صندوق البدء للأونر بالاسم أو UID
-      if(isOwner(room)){
-        startBox.classList.remove("hidden");
-        const allReady = isAllReady(playersCache);
-        startBtn.disabled = !allReady;
-        startMsg.textContent = allReady ? "الكل جاهز. تقدر تبدأ." : "انتظر لين الجميع يصير Ready.";
-      }
+      // ✅ FIX: نعتمد على دالة واحدة موحدة لتحديث زر البدء
+      refreshStartBoxUI();
       restartBtn.classList.add("hidden");
       stopTick();
       return;

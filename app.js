@@ -231,10 +231,14 @@ function isOwner(room){
 
 /**
  * ✅ FIX: update Start button when players ready changes
- */
+*/
 function refreshStartBoxUI(){
   if (!roomCache) return;
+
+  // فقط أثناء الانتظار
   if (roomCache.status !== "WAITING") return;
+
+  // يظهر للأونر فقط
   if (!isOwner(roomCache)) return;
 
   startBox.classList.remove("hidden");
@@ -280,7 +284,6 @@ function playTone({freq=880, durationMs=120, type="sine", gain=0.05} = {}){
 }
 
 function playBell(){
-  // little bell: 2 quick tones
   playTone({freq: 988, durationMs: 110, type:"triangle", gain:0.05});
   setTimeout(()=>playTone({freq: 1319, durationMs: 140, type:"triangle", gain:0.045}), 130);
 }
@@ -295,7 +298,6 @@ function playTimeUp(){
 }
 
 function mountSoundToggle(){
-  // optional: add a small button in topbar if not exists
   if(!topBar) return;
   if(soundBtn) return;
 
@@ -311,7 +313,6 @@ function mountSoundToggle(){
     unlockAudio();
   });
 
-  // try to append near copy button / room code
   try{
     copyCodeBtn?.parentElement?.appendChild(soundBtn);
   }catch{
@@ -351,7 +352,6 @@ function renderPlayers(players, ownerUid, ownerName){
     const row=document.createElement("div");
     row.className="playerRow";
 
-    // voting status colors
     if(voting && q){
       const isAsker = p.uid === q.askerUid;
       const isAnswered = answeredSet.has(p.uid);
@@ -386,7 +386,6 @@ function renderPlayers(players, ownerUid, ownerName){
       left.appendChild(b);
     }
 
-    // pending indicator (during voting)
     if(voting && q){
       const pill=document.createElement("span");
       pill.className="badge badgeState";
@@ -426,7 +425,6 @@ function renderPlayers(players, ownerUid, ownerName){
 function renderFinish(players){
   const sorted=[...players].sort((a,b)=>(b.score||0)-(a.score||0));
 
-  // keep top3 podium as-is
   podium.innerHTML="";
   const top3 = [sorted[0],sorted[1],sorted[2]].filter(Boolean);
   const labels = ["المركز الأول","المركز الثاني","المركز الثالث"];
@@ -448,7 +446,6 @@ function renderFinish(players){
     podium.appendChild(box);
   }
 
-  // full leaderboard (all players) + highlight top 3
   leader.innerHTML="";
   sorted.forEach((p,i)=>{
     const row=document.createElement("div");
@@ -528,23 +525,18 @@ createBtn.addEventListener("click", async ()=>{
 
   await setDoc(roomRef,{
     ownerUid: user.uid,
-    ownerName: name,
+    ownerName: name, // ✅ مهم: نخزن اسم الأونر لحل مشكلة UID
     createdAt: serverTimestamp(),
-
-    status: "WAITING",         // WAITING | STARTED | FINISHED
-    phase: "ASKING",           // ASKING | VOTING
+    status: "WAITING", // WAITING | STARTED | FINISHED
+    phase: "ASKING",   // ASKING | VOTING
     roundsRequested: rounds,
-
     askTimeSec,
     voteTimeSec,
-
     playerOrder: null,
     totalTurns: null,
     turnNum: 0,
-
     qCounter: 0,
     currentQuestion: null,
-
     phaseEndsAtMs: null
   });
 
@@ -788,7 +780,6 @@ async function enterRoom(code){
       const q = room.currentQuestion;
       if(!q) return;
 
-      // 🔔 Bell when a new question starts voting (once per client)
       if(q.qid && q.qid !== lastBellQid && !q.reveal){
         lastBellQid = q.qid;
         playBell();
@@ -833,7 +824,6 @@ publishBtn.addEventListener("click", async ()=>{
 
   const qid = String((room.qCounter||0)+1);
 
-  // reset local sound flags for this question
   lastBellQid = null;
   lastEndBeepQid = null;
   lastTickSecond = null;
@@ -883,17 +873,15 @@ skipBtn.addEventListener("click", async ()=>{
 
 /* Voting UI */
 function renderChoices(q, order){
-  const isAsker = q.askerUid === user.uid;
   const alreadyAnswered = (q.answeredUids || []).includes(user.uid);
+  const isAsker = q.askerUid === user.uid;
   const isReveal = !!q.reveal;
 
-  // counts + pending names
   const totalVoters = order.filter(uid=>uid!==q.askerUid);
   const answered = (q.answeredUids || []);
   const pendingUids = totalVoters.filter(uid=>!answered.includes(uid));
   const pendingNames = pendingUids.map(uid=>getPlayerName(uid)).filter(Boolean);
 
-  // top status line
   if(isReveal){
     voteSub.textContent = "الإجابة الصحيحة";
     voteMsg.textContent = "الراوند الجاي بعد ثواني...";
@@ -904,7 +892,6 @@ function renderChoices(q, order){
 
   choices.innerHTML = "";
 
-  // get my chosen (for reveal)
   const me = getMe();
   const myChosenIdx = (me?.lastAnswerQid === q.qid) ? me?.lastAnswerIdx : null;
 
@@ -915,28 +902,18 @@ function renderChoices(q, order){
 
     if(isReveal){
       b.disabled = true;
-
-      // correct is green
       if(idx === q.correctIndex) b.classList.add("choiceCorrect");
-
-      // my wrong choice (optional red)
       if(myChosenIdx !== null && idx === myChosenIdx && myChosenIdx !== q.correctIndex){
         b.classList.add("choiceWrong");
       }
-
-      // dim others
       if(idx !== q.correctIndex && idx !== myChosenIdx){
         b.classList.add("choiceDim");
       }
     }else{
-      // lock voting if already answered or asker
       b.disabled = alreadyAnswered || isAsker;
-
-      // show selected
       if(myChosenIdx !== null && idx === myChosenIdx){
         b.classList.add("choiceSelected");
       }
-
       b.addEventListener("click", async ()=>{
         await submitAnswer(idx);
       });
@@ -945,22 +922,19 @@ function renderChoices(q, order){
     choices.appendChild(b);
   });
 
-  // helper text
-  if(isAsker && !isReveal){
-    // asker can't vote
-    voteMsg.textContent = pendingNames.length ? `Waiting: ${pendingNames.join(", ")}` : "Everyone voted!";
-  } else if(alreadyAnswered && !isReveal){
-    // already voted
-    // keep voteMsg as waiting list
+  if(isAsker){
+    voteSub.textContent="انتظر إجابات الباقين";
+  } else if(alreadyAnswered){
+    voteSub.textContent="تم تسجيل إجابتك";
+  } else {
+    voteSub.textContent="اختر إجابتك";
   }
 
-  // if all voted -> asker settles + reveals
   const allAnswered = pendingUids.length === 0;
   if(allAnswered && user.uid===q.askerUid && !isReveal){
     settleAndReveal(order, true);
   }
 
-  // refresh players coloring
   if(roomCache){
     renderPlayers(playersCache, roomCache.ownerUid, roomCache.ownerName);
   }
@@ -983,16 +957,11 @@ async function submitAnswer(chosenIdx){
   await updateDoc(playerRef,{ lastAnswerQid:q.qid, lastAnswerIdx:chosenIdx });
   await updateDoc(roomRef,{ "currentQuestion.answeredUids": arrayUnion(user.uid) });
 
-  // instant ui
   voteSub.textContent="تم تسجيل إجابتك";
+  voteMsg.textContent="انتظر باقي اللاعبين...";
 }
 
-/**
- * ✅ Settle + Reveal (3 sec) + NEW scoring system (A)
- * - correct voters +1
- * - wrong/no answer 0
- * - asker + wrongCount
- */
+/* Settle + Reveal */
 async function settleAndReveal(order, allowPartial=false){
   const roomRef=doc(db,"rooms",currentRoomCode);
   const rs=await getDoc(roomRef);
@@ -1002,23 +971,18 @@ async function settleAndReveal(order, allowPartial=false){
   if(room.phase!=="VOTING" || !room.currentQuestion) return;
   const q=room.currentQuestion;
 
-  // only asker settles
   if(q.askerUid !== user.uid) return;
-
-  // don't settle twice
   if(q.settled) return;
 
   const playersSnap=await getDocs(query(collection(db,"rooms",currentRoomCode,"players"),orderBy("joinedAtMs","asc")));
   const plist=playersSnap.docs.map(d=>({uid:d.id, ...d.data()}));
 
+  const batch=writeBatch(db);
   const byUid = new Map(plist.map(p=>[p.uid,p]));
   const participants = order.map(uid=>byUid.get(uid)).filter(Boolean);
 
   let wrongCount = 0;
 
-  const batch=writeBatch(db);
-
-  // score voters
   participants.forEach(p=>{
     if(p.uid === q.askerUid) return;
 
@@ -1028,16 +992,13 @@ async function settleAndReveal(order, allowPartial=false){
     if(correct){
       batch.update(doc(db,"rooms",currentRoomCode,"players",p.uid),{ score:(p.score||0)+1 });
     }else{
-      // wrong or no answer => 0
       wrongCount += 1;
     }
   });
 
-  // score asker: + number wrong
   const asker = byUid.get(q.askerUid);
   batch.update(doc(db,"rooms",currentRoomCode,"players",q.askerUid),{ score:(asker?.score||0)+wrongCount });
 
-  // switch to reveal mode for 3 seconds
   batch.update(roomRef,{
     "currentQuestion.settled": true,
     "currentQuestion.reveal": true,
@@ -1084,7 +1045,6 @@ async function tick(){
 
   const secLeft = Math.max(0, Math.ceil(left/1000));
 
-  // timer sound (last 5 seconds) only in VOTING and not reveal
   if(room.phase==="VOTING" && room.currentQuestion && !room.currentQuestion.reveal){
     if(secLeft <= 5 && secLeft >= 1){
       if(lastTickSecond !== secLeft){
@@ -1094,7 +1054,6 @@ async function tick(){
     }
   }
 
-  // time up sound once
   if(left <= 0 && room.phase==="VOTING" && room.currentQuestion){
     const qid = room.currentQuestion.qid || "x";
     if(lastEndBeepQid !== qid && !room.currentQuestion.reveal){
@@ -1116,7 +1075,6 @@ async function tick(){
   const askerUid = order.length ? order[turnNum % order.length] : null;
   if(!askerUid) return;
 
-  // ASKING timeout: auto-skip by asker
   if(room.phase==="ASKING"){
     if(askerUid === user.uid){
       await updateDoc(roomRef, nextState(room));
@@ -1124,12 +1082,10 @@ async function tick(){
     return;
   }
 
-  // VOTING timeout:
   if(room.phase==="VOTING"){
     const q = room.currentQuestion;
     if(!q) return;
 
-    // if reveal finished -> advance
     if(q.reveal){
       if(q.askerUid === user.uid){
         await updateDoc(roomRef, nextState(room));
@@ -1137,7 +1093,6 @@ async function tick(){
       return;
     }
 
-    // if voting finished by timeout -> settle + reveal
     if(q.askerUid === user.uid){
       await settleAndReveal(order, true);
     }
